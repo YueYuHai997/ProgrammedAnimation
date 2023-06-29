@@ -3,31 +3,33 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Linq;
 using UnityEngine;
+using RootMotion.FinalIK;
+using Unity.Mathematics;
 
-public class ControlALL : MonoBehaviour
+public class LimbIk_Manager : MonoBehaviour
 {
-    private static ControlALL instance;
+    private static LimbIk_Manager instance;
 
-    public static ControlALL Instance
+    public static LimbIk_Manager Instance
     {
         get
         {
             if (instance == null)
             {
-                instance = FindObjectOfType<ControlALL>();
+                instance = FindObjectOfType<LimbIk_Manager>();
             }
             return instance;
         }
     }
 
     //腿部组
-    public Control[] Controls;
+    public Control_LimbIk[] Controls;
 
     //同步组一
-    public List<Control> Group_1 = new List<Control>();
+    public List<Control_LimbIk> Group_1 = new List<Control_LimbIk>();
 
     //同步组二
-    public List<Control> Group_2 = new List<Control>();
+    public List<Control_LimbIk> Group_2 = new List<Control_LimbIk>();
 
     float _offY;
 
@@ -38,6 +40,11 @@ public class ControlALL : MonoBehaviour
 
     //移动朝向
     public Vector3 Dir;
+
+    public Matrix4x4 MDir;
+
+    //移动朝向权重
+    public float DirWeight;
 
     private Vector3 _oldPos;
 
@@ -66,14 +73,19 @@ public class ControlALL : MonoBehaviour
             item.CanMove = true;
         }
 
-        if (Physics.Raycast(this.transform.position, Vector3.down, out RaycastHit hit, 100, layerMask))
+        if (Physics.Raycast(this.transform.position, Vector3.down, out RaycastHit hit, 20, layerMask))
         {
             this.transform.position = hit.point + this.transform.up * Body_High;
+        }
+
+        foreach (var item in Controls)
+        {
+            item.Init();
+            Debug.Log(item.name);
         }
     }
 
     float hight;
-
     private void Start()
     {
         foreach (var item in Controls)
@@ -81,7 +93,6 @@ public class ControlALL : MonoBehaviour
             _offY += item.Original.y - item.LegOffsetY;
         }
         _offY /= (float)Controls.Length;
-
     }
 
 
@@ -89,36 +100,34 @@ public class ControlALL : MonoBehaviour
     {
         if (Input.GetKey(KeyCode.W))
         {
-            this.transform.position += this.transform.forward * Time.deltaTime * MoveSpeed;
+            this.transform.position += Vector3.forward * Time.deltaTime * MoveSpeed;
         }
 
         if (Input.GetKey(KeyCode.S))
         {
-            this.transform.position -= this.transform.forward * Time.deltaTime * MoveSpeed;
+            this.transform.position -= Vector3.forward * Time.deltaTime * MoveSpeed;
         }
 
         if (Input.GetKey(KeyCode.A))
         {
-            this.transform.position -= this.transform.right * Time.deltaTime * MoveSpeed;
+            this.transform.position -= Vector3.right * Time.deltaTime * MoveSpeed;
         }
 
         if (Input.GetKey(KeyCode.D))
         {
-            this.transform.position += this.transform.right * Time.deltaTime * MoveSpeed;
+            this.transform.position += Vector3.right * Time.deltaTime * MoveSpeed;
         }
-
     }
 
 
     private void Update()
     {
-
         if (_oldPos != transform.position)
         {
             Dir = this.transform.position - _oldPos;
             Dir.y = 0;
-            _oldPos = transform.position;
         }
+        _oldPos = transform.position;
 
         if (Vector3.Dot(_oldDir, Dir) < 0) //移动方向反向了
         {
@@ -138,6 +147,7 @@ public class ControlALL : MonoBehaviour
         _oldDir = Dir;
 
         MoveControl();
+
         RotAndBodyRot();
 
     }
@@ -154,27 +164,31 @@ public class ControlALL : MonoBehaviour
         return _canMove[0];
     }
 
+    Vector3 GizmosPos;
     float Temp;
     private Vector3 OldPos;
     private Vector3 InnerPos;
-    public void UpdatPostion(Control control)
+    public void UpdatPostion(Control_LimbIk control)
     {
         Temp = 0;
+        GizmosPos = Vector3.zero;
         foreach (var item in Controls)
         {
             Temp += item.footPos.y;
+            GizmosPos += item.footPos;
         }
         Temp /= (float)Controls.Length;
+        GizmosPos /= (float)Controls.Length;
+        Debug.Log(Temp - _offY);
 
-        InnerPos = this.transform.position - OldPos;
 
         this.transform.position += Vector3.up * (Temp - _offY);
 
-        //减去输入已经导致的Y轴移动
-        this.transform.position -= InnerPos * Mathf.Sin(20 * Mathf.Deg2Rad);
-
+        Debug.Log(Vector3.up);
+        Debug.Log(this.transform.up);
 
         _offY = Temp;
+
         if (Group_1.Contains(control))
         {
             _canMove[Group_1.FindIndex((x) => x == control)] = true;
@@ -202,21 +216,24 @@ public class ControlALL : MonoBehaviour
             }
         }
 
-        OldPos = this.transform.position;
     }
-
-    public Vector3 RotAxis;
-
-
+    public Vector3 Rot;
     private void RotAndBodyRot()
     {
-        Vector3 DirA = Controls[0].footPos - Controls[2].footPos;
-        Vector3 DirB = Controls[1].footPos - Controls[3].footPos;
+        Vector3 DirA = Controls[0].footPos - Controls[3].footPos;
+        Vector3 DirB = Controls[1].footPos - Controls[2].footPos;
+
+        Debug.DrawLine(Controls[0].footPos, Controls[3].footPos);
+        Debug.DrawLine(Controls[1].footPos, Controls[2].footPos);
 
         Vector3 dir = Vector3.Cross(DirA, DirB);
 
         dir = Vector3.Dot(dir, Vector3.up) < 0 ? -dir : dir;
-        RotAxis = dir;
+        Rot = dir;
+
+        MDir = Matrix4x4.Rotate(quaternion.Euler(0, Vector3.Angle(dir, Vector3.up)/2, 0));
+        Debug.Log(Vector3.Angle(dir, Vector3.up));
+
 
         if (Input.GetKey(KeyCode.Q))
         {
@@ -226,7 +243,15 @@ public class ControlALL : MonoBehaviour
         {
             CueentAngle -= RotSpeed * Time.deltaTime * 40;
         }
+
         this.transform.up = dir;
         this.transform.rotation *= Quaternion.Euler(0, CueentAngle, 0);
+    }
+
+
+    private void OnDrawGizmos()
+    {
+        Gizmos.color = Color.red;
+        Gizmos.DrawSphere(this.transform.position + this.transform.up * (Temp - _offY), 1f); //世界坐标
     }
 }
